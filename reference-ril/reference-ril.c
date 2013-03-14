@@ -934,9 +934,7 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
     ATResponse *p_response = NULL;
     int err;
     char *line;
-    int count =0;
-    int numofElements=sizeof(RIL_SignalStrength_v6)/sizeof(int);
-    int response[numofElements];
+    RIL_SignalStrength_v6 response;
 
     err = at_send_command_singleline("AT+CSQ", "+CSQ:", &p_response);
 
@@ -949,13 +947,6 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
 
     err = at_tok_start(&line);
     if (err < 0) goto error;
-
-    for (count =0; count < numofElements; count ++) {
-        err = at_tok_nextint(&line, &(response[count]));
-        if (err < 0) goto error;
-    }
-
-    RIL_onRequestComplete(t, RIL_E_SUCCESS, response, sizeof(response));
 
     at_response_free(p_response);
     return;
