@@ -3240,6 +3240,7 @@ static void probeForModemMode(ModemInfo *info)
     if (is_multimode_modem(info)) {
         RLOGI("Found Multimode Modem. Supported techs mask: %8.8x. Current tech: %d",
             info->supportedTechs, info->currentTech);
+        info->isMultimode = 1;
         return;
     }
 
