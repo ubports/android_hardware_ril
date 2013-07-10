@@ -673,7 +673,7 @@ static void requestSetNetworkSelectionManual(
 
     int rilError = RIL_E_SUCCESS;
     if (err < 0) {
-        ALOGE("requestSetNetworkSelectionManual failed, err: %d", err);
+        LOGE("requestSetNetworkSelectionManual failed, err: %d", err);
         at_response_free(p_response);
         RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
         return;
@@ -934,7 +934,9 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
     ATResponse *p_response = NULL;
     int err;
     char *line;
-    RIL_SignalStrength_v6 response;
+    int count =0;
+    int numofElements=sizeof(RIL_SignalStrength_v6)/sizeof(int);
+    int response[numofElements];
 
     err = at_send_command_singleline("AT+CSQ", "+CSQ:", &p_response);
 
@@ -947,6 +949,13 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
 
     err = at_tok_start(&line);
     if (err < 0) goto error;
+
+    for (count =0; count < numofElements; count ++) {
+        err = at_tok_nextint(&line, &(response[count]));
+        if (err < 0) goto error;
+    }
+
+    RIL_onRequestComplete(t, RIL_E_SUCCESS, response, sizeof(response));
 
     at_response_free(p_response);
     return;
@@ -1675,17 +1684,6 @@ static void requestOperator(void *data __unused, size_t datalen __unused, RIL_To
 
     if (err != 0) goto error;
 
-    switch (at_get_cme_error(p_response)) {
-        case CME_SUCCESS:
-            break;
-
-        case CME_NO_NETWORK_SERVICE:
-            goto done;
-
-        default:
-            goto error;
-    }
-
     for (i = 0, p_cur = p_response->p_intermediates
             ; p_cur != NULL
             ; p_cur = p_cur->p_next, i++
@@ -1729,7 +1727,6 @@ static void requestOperator(void *data __unused, size_t datalen __unused, RIL_To
         goto error;
     }
 
-done:
     RIL_onRequestComplete(t, RIL_E_SUCCESS, response, sizeof(response));
     at_response_free(p_response);
 
@@ -2078,14 +2075,13 @@ error:
 static void  requestEnterSimPin(void*  data, size_t  datalen, RIL_Token  t)
 {
     ATResponse   *p_response = NULL;
-    int           retries = -1;
     int           err;
     char*         cmd = NULL;
     const char**  strings = (const char**)data;;
 
-    if ( datalen == 2*sizeof(char*) ) {
+    if ( datalen == sizeof(char*) ) {
         asprintf(&cmd, "AT+CPIN=%s", strings[0]);
-    } else if ( datalen == 3*sizeof(char*) ) {
+    } else if ( datalen == 2*sizeof(char*) ) {
         asprintf(&cmd, "AT+CPIN=%s,%s", strings[0], strings[1]);
     } else
         goto error;
@@ -2094,43 +2090,10 @@ static void  requestEnterSimPin(void*  data, size_t  datalen, RIL_Token  t)
     free(cmd);
 
     if (err < 0 || p_response->success == 0) {
-        at_response_free(p_response);
-
-        // Get remaining PIN retries
-        char* line = NULL;
-        char* type = NULL;
-
-        asprintf(&cmd, "AT+CPINR=SIM PIN");
-        err = at_send_command_singleline(cmd, "+CPINR:", &p_response);
-        free(cmd);
-
-        if (err < 0 || p_response->success == 0) {
-            goto error;
-        }
-
-        line = p_response->p_intermediates->line;
-        err = at_tok_start(&line);
-
-        if (err < 0) {
-            goto error;
-        }
-
-        err = at_tok_nextstr(&line, &type);
-
-        if (err < 0) {
-            goto error;
-        }
-
-        err = at_tok_nextint(&line, &retries);
-
-        if (err < 0) {
-            retries = -1;
-        }
 error:
-        RIL_onRequestComplete(t, RIL_E_PASSWORD_INCORRECT, &retries, sizeof(int));
+        RIL_onRequestComplete(t, RIL_E_PASSWORD_INCORRECT, NULL, 0);
     } else {
-        retries = 0;
-        RIL_onRequestComplete(t, RIL_E_SUCCESS, &retries, sizeof(int));
+        RIL_onRequestComplete(t, RIL_E_SUCCESS, NULL, 0);
     }
     at_response_free(p_response);
 }
@@ -2164,14 +2127,23 @@ static void requestExitEmergencyMode(void *data __unused, size_t datalen __unuse
     RIL_onRequestComplete(t, RIL_E_SUCCESS, NULL, 0);
 }
 
-static void requestGetSmscAddress(int request, void *data, size_t datalen, RIL_Token t)
+static void requestGetUnlockRetryCount(void*  data, size_t  datalen, RIL_Token  t)
 {
-    ATResponse *p_response = NULL;
-    int err;
-    char *line;
+    ATResponse   *p_response = NULL;
+    int           err;
+    char*         cmd = NULL;
+    const char**  strings = (const char**)data;
+    char*         line = NULL;
+    char*         type = NULL;
+    int           retries[2];
 
-    err = at_send_command_singleline("AT+CSCA?", "+CSCA:", &p_response);
+    if ( datalen == sizeof(char*) ) {
+        asprintf(&cmd, "AT+CPINR=%s", strings[0]);
+    } else
+        goto error;
 
+    err = at_send_command_singleline(cmd, "+CPINR:", &p_response);
+    free(cmd);
     if (err < 0 || p_response->success == 0) {
         goto error;
     }
@@ -2179,38 +2151,33 @@ static void requestGetSmscAddress(int request, void *data, size_t datalen, RIL_T
     line = p_response->p_intermediates->line;
 
     err = at_tok_start(&line);
-    if (err < 0) goto error;
+    if (err < 0) {
+        goto error;
+    }
 
-    // Skip first space
-    line++;
+    err = at_tok_nextstr(&line, &type);
+    if (err < 0) {
+        goto error;
+    }
 
-    RIL_onRequestComplete(t, RIL_E_SUCCESS, line, strlen(line));
+    err = at_tok_nextint(&line, retries+0);
+    if (err < 0) {
+        goto error;
+    }
 
+    err = at_tok_nextint(&line, retries+1);
+    if (err < 0) {
+        goto error;
+    }
+
+    RIL_onRequestComplete(t, RIL_E_SUCCESS, retries, sizeof(retries));
     at_response_free(p_response);
+
     return;
 
 error:
     RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
     at_response_free(p_response);
-    return;
-}
-
-static void requestSetSmscAddress(int request, void *data, size_t datalen, RIL_Token t)
-{
-    ATResponse *p_response = NULL;
-    int err;
-    char cmd[64];
-
-    snprintf(cmd, sizeof(cmd), "AT+CSCA=%s", data);
-    err = at_send_command(cmd, &p_response);
-
-    if (err < 0 || p_response->success == 0) {
-        RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
-        return;
-    }
-
-    RIL_onRequestComplete(t, RIL_E_SUCCESS, NULL, 0);
-    return;
 }
 
 // TODO: Use all radio types
@@ -2320,6 +2287,17 @@ onRequest (int request, void *data, size_t datalen, RIL_Token t)
      */
     if (sState == RADIO_STATE_UNAVAILABLE
         && request != RIL_REQUEST_GET_SIM_STATUS
+    ) {
+        RIL_onRequestComplete(t, RIL_E_RADIO_NOT_AVAILABLE, NULL, 0);
+        return;
+    }
+
+    /* Ignore all non-power requests when RADIO_STATE_OFF
+     * (except RIL_REQUEST_GET_SIM_STATUS)
+     */
+    if (sState == RADIO_STATE_OFF
+        && !(request == RIL_REQUEST_RADIO_POWER
+            || request == RIL_REQUEST_GET_SIM_STATUS)
     ) {
         RIL_onRequestComplete(t, RIL_E_RADIO_NOT_AVAILABLE, NULL, 0);
         return;
@@ -2600,7 +2578,13 @@ onRequest (int request, void *data, size_t datalen, RIL_Token t)
             int reply[2];
             //0==unregistered, 1==registered
             reply[0] = s_ims_registered;
+        case RIL_REQUEST_GET_UNLOCK_RETRY_COUNT:
+            requestGetUnlockRetryCount(data, datalen, t);
+            break;
 
+        case RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: {
+            char **operators;
+            int i, err, entryCount;
             //to be used when changed to include service supporated info
             //reply[1] = s_ims_services;
 
@@ -2718,14 +2702,6 @@ onRequest (int request, void *data, size_t datalen, RIL_Token t)
 
             break;
         }
-
-        case RIL_REQUEST_GET_SMSC_ADDRESS:
-            requestGetSmscAddress(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_SET_SMSC_ADDRESS:
-            requestSetSmscAddress(request, data, datalen, t);
-            break;
 
         default:
             RLOGD("Request not supported. Tech: %d",TECH(sMdmInfo));
@@ -2846,11 +2822,7 @@ getRUIMStatus()
     char *cpinLine;
     char *cpinResult;
 
-    if (sState == RADIO_STATE_OFF) {
-        ret = SIM_ABSENT;
-        goto done;
-    }
-    if (sState == RADIO_STATE_UNAVAILABLE) {
+    if (sState == RADIO_STATE_OFF || sState == RADIO_STATE_UNAVAILABLE) {
         ret = SIM_NOT_READY;
         goto done;
     }
@@ -2927,12 +2899,8 @@ getSIMStatus()
     char *cpinLine;
     char *cpinResult;
 
-    ALOGD("getSIMStatus(). sState: %d",sState);
-    if (sState == RADIO_STATE_OFF) {
-        ret = SIM_ABSENT;
-        goto done;
-    }
-    if (sState == RADIO_STATE_UNAVAILABLE) {
+    RLOGD("getSIMStatus(). sState: %d",sState);
+    if (sState == RADIO_STATE_OFF || sState == RADIO_STATE_UNAVAILABLE) {
         ret = SIM_NOT_READY;
         goto done;
     }
@@ -3306,7 +3274,6 @@ static void probeForModemMode(ModemInfo *info)
     if (is_multimode_modem(info)) {
         RLOGI("Found Multimode Modem. Supported techs mask: %8.8x. Current tech: %d",
             info->supportedTechs, info->currentTech);
-        info->isMultimode = 1;
         return;
     }
 
@@ -3486,11 +3453,11 @@ static void onUnsolicited (const char *s, const char *sms_pdu)
         line = strdup(s);
         err = at_tok_start(&line);
         if (err < 0) {
-            ALOGE("Error  %d \t %s\n ", err, line);
+            LOGE("Error  %d \t %s\n ", err, line);
         }
         err = at_tok_nextstr(&line, &pStkPdu);
         if (err < 0) {
-            ALOGE("Error:  %d \t %s\n ", err, line);
+            LOGE("Error:  %d \t %s\n ", err, line);
         }
         ALOGI("STK Command PDU : %s \n", pStkPdu);
         if(NULL != pStkPdu) {
@@ -3555,7 +3522,7 @@ static void onUnsolicited (const char *s, const char *sms_pdu)
             case 1: // current mode correctly parsed
             case 0: // preferred mode correctly parsed
                 mask = 1 << tech;
-                if (mask != MDM_GSM && mask != MDM_CDMA && mask != MDM_EVDO &&
+                if (mask != MDM_GSM && mask != MDM_CDMA &&
                      mask != MDM_WCDMA && mask != MDM_LTE) {
                     RLOGE("Unknown technology %d\n", tech);
                 } else {
