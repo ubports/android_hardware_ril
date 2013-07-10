@@ -145,4 +145,26 @@
     {RIL_REQUEST_SET_DATA_PROFILE, dispatchDataProfile, responseVoid},
     {RIL_REQUEST_SHUTDOWN, dispatchVoid, responseVoid},
     {RIL_REQUEST_GET_RADIO_CAPABILITY, dispatchVoid, responseRadioCapability},
-    {RIL_REQUEST_SET_RADIO_CAPABILITY, dispatchRadioCapability, responseRadioCapability},
+	{RIL_REQUEST_SET_RADIO_CAPABILITY, dispatchRadioCapability, responseRadioCapability},
+    /* unsupported/unused request numbers below */
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL}, /* 140 */
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    {0, NULL, NULL},
+    /* Mozilla-defined requests below */
+    {RIL_REQUEST_GET_UNLOCK_RETRY_COUNT, dispatchStrings, responseInts},
+
