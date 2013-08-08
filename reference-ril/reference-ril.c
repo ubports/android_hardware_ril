@@ -1970,7 +1970,7 @@ static void requestSetupDataCall(void *data, size_t datalen, RIL_Token t)
         err = at_send_command("AT+CGEREP=1,0", NULL);
 
         // Hangup anything that's happening there now
-        err = at_send_command("AT+CGACT=1,0", NULL);
+        err = at_send_command("AT+CGACT=0,1", NULL);
 
         // Start data on PDP context 1
         err = at_send_command("ATD*99***1#", &p_response);
@@ -1989,6 +1989,30 @@ error:
     RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
     at_response_free(p_response);
 
+}
+
+static void requestDeactivateDataCall(void *data, size_t datalen, RIL_Token t)
+{
+    ATResponse *p_response = NULL;
+    int err;
+    char *cmd, *cid;
+
+    cid = ((char **)data)[0];
+    asprintf(&cmd, "AT+CGACT=0,%s", cid);
+    err = at_send_command(cmd, &p_response);
+    if (err < 0 || p_response->success == 0) {
+        goto error;
+    }
+
+    RIL_onRequestComplete(t, RIL_E_SUCCESS, NULL, 0);
+    at_response_free(p_response);
+    free(cmd);
+    return;
+
+error:
+    RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
+    at_response_free(p_response);
+    free(cmd);
 }
 
 static void requestSMSAcknowledge(void *data, size_t datalen __unused, RIL_Token t)
@@ -2274,114 +2298,6 @@ static void requestGetHardwareConfig(void *data, size_t datalen, RIL_Token t)
  * that the radio is ready to process another command (whether or not
  * the previous command has completed).
  */
-
-/**
- * CDMA specific request
- */
-static void
-onCdmaSpecificRequest (int request, void *data, size_t datalen, RIL_Token t)
-{
-    switch (request) {
-        case RIL_REQUEST_CDMA_SEND_SMS:
-            requestCdmaSendSMS(data, datalen, t);
-            break;
-
-        case RIL_REQUEST_BASEBAND_VERSION:
-            requestCdmaBaseBandVersion(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_DEVICE_IDENTITY:
-            requestCdmaDeviceIdentity(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_CDMA_SUBSCRIPTION:
-            requestCdmaSubscription(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_CDMA_SET_SUBSCRIPTION_SOURCE:
-            requestCdmaSetSubscriptionSource(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_CDMA_GET_SUBSCRIPTION_SOURCE:
-            requestCdmaGetSubscriptionSource(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_CDMA_QUERY_ROAMING_PREFERENCE:
-            requestCdmaGetRoamingPreference(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_CDMA_SET_ROAMING_PREFERENCE:
-            requestCdmaSetRoamingPreference(request, data, datalen, t);
-            break;
-
-        case RIL_REQUEST_EXIT_EMERGENCY_CALLBACK_MODE:
-            requestExitEmergencyMode(data, datalen, t);
-            break;
-
-        default:
-            ALOGD("Request not supported. Tech: %d", TECH(sMdmInfo));
-            RIL_onRequestComplete(t, RIL_E_REQUEST_NOT_SUPPORTED, NULL, 0);
-            break;
-    }
-}
-
-/**
- * GSM specific request
- */
-static void
-onGsmSpecificRequest (int request, void *data, size_t datalen, RIL_Token t)
-{
-    switch (request) {
-        case RIL_REQUEST_SEND_SMS:
-            requestSendSMS(data, datalen, t);
-            break;
-
-        case RIL_REQUEST_SET_NETWORK_SELECTION_AUTOMATIC: {
-            int err = at_send_command("AT+COPS=0", NULL);
-            if (err < 0) {
-              RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
-            } else {
-              RIL_onRequestComplete(t, RIL_E_SUCCESS, NULL, 0);
-            }
-            break;
-        }
-
-        case RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL:
-            requestSetNetworkSelectionManual(data, datalen, t);
-            break;
-
-        case RIL_REQUEST_QUERY_NETWORK_SELECTION_MODE:
-            requestQueryNetworkSelectionMode(data, datalen, t);
-            break;
-
-        case RIL_REQUEST_QUERY_AVAILABLE_NETWORKS: {
-            char **operators;
-            int i, err, entryCount;
-
-            err = requestAvailableOperators(&operators, &entryCount);
-
-            if (err < 0) {
-                RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
-            } else {
-                RIL_onRequestComplete(t, RIL_E_SUCCESS,
-                    (void *) operators, entryCount * sizeof(char *));
-            }
-
-            for (i = 0; i < entryCount; i++) {
-                free(operators[i]);
-            }
-            free(operators);
-
-            break;
-        }
-
-        default:
-            ALOGD("Request not supported. Tech: %d",TECH(sMdmInfo));
-            RIL_onRequestComplete(t, RIL_E_REQUEST_NOT_SUPPORTED, NULL, 0);
-            break;
-    }
-}
-
 static void
 onRequest (int request, void *data, size_t datalen, RIL_Token t)
 {
@@ -2559,6 +2475,9 @@ onRequest (int request, void *data, size_t datalen, RIL_Token t)
         case RIL_REQUEST_SETUP_DATA_CALL:
             requestSetupDataCall(data, datalen, t);
             break;
+        case RIL_REQUEST_DEACTIVATE_DATA_CALL:
+            requestDeactivateDataCall(data, datalen, t);
+            break;
         case RIL_REQUEST_SMS_ACKNOWLEDGE:
             requestSMSAcknowledge(data, datalen, t);
             break;
@@ -2610,8 +2529,25 @@ onRequest (int request, void *data, size_t datalen, RIL_Token t)
             at_response_free(p_response);
             break;
 
+        case RIL_REQUEST_SET_NETWORK_SELECTION_AUTOMATIC:
+            err = at_send_command("AT+COPS=0", NULL);
+            if (err < 0) {
+              RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
+            } else {
+              RIL_onRequestComplete(t, RIL_E_SUCCESS, NULL, 0);
+            }
+            break;
+
+        case RIL_REQUEST_SET_NETWORK_SELECTION_MANUAL:
+            requestSetNetworkSelectionManual(data, datalen, t);
+            break;
+
         case RIL_REQUEST_DATA_CALL_LIST:
             requestDataCallList(data, datalen, t);
+            break;
+
+        case RIL_REQUEST_QUERY_NETWORK_SELECTION_MODE:
+            requestQueryNetworkSelectionMode(data, datalen, t);
             break;
 
         case RIL_REQUEST_OEM_HOOK_RAW:
@@ -2797,11 +2733,6 @@ onRequest (int request, void *data, size_t datalen, RIL_Token t)
         default:
             RLOGD("Request not supported. Tech: %d",TECH(sMdmInfo));
             RIL_onRequestComplete(t, RIL_E_REQUEST_NOT_SUPPORTED, NULL, 0);
-            if (TECH_BIT(sMdmInfo) & (MDM_CDMA | MDM_EVDO)) {
-                onCdmaSpecificRequest(request, data, datalen, t);
-            } else {
-                onGsmSpecificRequest(request, data, datalen, t);
-            }
             break;
     }
 }
@@ -3535,16 +3466,8 @@ static void onUnsolicited (const char *s, const char *sms_pdu)
         }
     } else if (strStartsWith(s,"+CRING:")
                 || strStartsWith(s,"RING")
-    ) {
-        RIL_onUnsolicitedResponse (
-            RIL_UNSOL_CALL_RING,
-            NULL, 0);
-        RIL_onUnsolicitedResponse (
-            RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED,
-            NULL, 0);
-    } else if (strStartsWith(s,"NO CARRIER")
+                || strStartsWith(s,"NO CARRIER")
                 || strStartsWith(s,"+CCWA")
-                || strStartsWith(s, "CALL STATE CHANGED")
     ) {
         RIL_onUnsolicitedResponse (
             RIL_UNSOL_RESPONSE_CALL_STATE_CHANGED,
