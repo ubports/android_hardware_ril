@@ -18,7 +18,6 @@
 #include <telephony/ril_cdma_sms.h>
 #include <telephony/librilutils.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <assert.h>
 #include <string.h>
 #include <errno.h>
@@ -35,7 +34,6 @@
 #include <getopt.h>
 #include <sys/socket.h>
 #include <cutils/sockets.h>
-#include <netutils/ifc.h>
 #include <termios.h>
 #include <sys/system_properties.h>
 #include <regex.h>
@@ -1013,6 +1011,18 @@ error:
     RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
 }
 
+static int handleSignalStrength(char *line, RIL_SignalStrength_v6 *response) {
+    int num = sizeof(RIL_SignalStrength_v6) / sizeof(int);
+    int *p = (int *)response;
+
+    while (num--) {
+        if (at_tok_nextint(&line, p++) < 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static void requestSignalStrength(void *data __unused, size_t datalen __unused, RIL_Token t)
 {
     ATResponse *p_response = NULL;
@@ -1022,10 +1032,10 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
     int numofElements=sizeof(RIL_SignalStrength_v6)/sizeof(int);
     int response[numofElements];
 
+    RIL_SignalStrength_v6 response;
     err = at_send_command_singleline("AT+CSQ", "+CSQ:", &p_response);
 
     if (err < 0 || p_response->success == 0) {
-        RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
         goto error;
     }
 
@@ -1038,6 +1048,16 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
         err = at_tok_nextint(&line, &(response[count]));
         if (err < 0) goto error;
     }
+
+    err = at_tok_nextint(&line, &(response.GW_SignalStrength.signalStrength));
+    if (err < 0) goto error;
+
+    err = at_tok_nextint(&line, &(response.GW_SignalStrength.bitErrorRate));
+    if (err < 0) goto error;
+
+    RIL_onRequestComplete(t, RIL_E_SUCCESS, (int *)&response, sizeof(response));
+    err = handleSignalStrength(line, &response);
+    if (err < 0) goto error;
 
     RIL_onRequestComplete(t, RIL_E_SUCCESS, response, sizeof(response));
 
@@ -1952,43 +1972,6 @@ error2:
     RIL_onRequestComplete(t, RIL_E_SMS_SEND_FAIL_RETRY, &response, sizeof(response));
 }
 
-static int configureInterface(const char* ifname, const char *addr)
-{
-    char ip[16];
-    int prefixLen, ret = -1;
-
-    if (2 != sscanf(addr, "%[.0-9]/%d", ip, &prefixLen))
-        return ret;
-
-    if (ifc_init())
-        return ret;
-
-    if (!ifc_up(ifname)) {
-        if (ifc_set_addr(ifname, inet_addr(ip)) ||
-            ifc_set_prefixLength(ifname, prefixLen)) {
-            ifc_down(ifname);
-        } else {
-            ret = 0;
-        }
-    }
-
-    ifc_close();
-
-    return ret;
-}
-
-static int deconfigureInterface(const char* ifname)
-{
-    int ret;
-
-    if (ifc_init())
-        return -1;
-
-    ret = ifc_down(ifname);
-    ifc_close();
-    return ret;
-}
-
 static void requestSetupDataCall(void *data, size_t datalen, RIL_Token t)
 {
     const char *apn;
@@ -2069,8 +2052,6 @@ static void requestSetupDataCall(void *data, size_t datalen, RIL_Token t)
         if (qmistatus < 0) goto error;
 
     } else {
-        RIL_Data_Call_Response_v6 tmp_rp;
-        int ret;
 
         if (datalen > 6 * sizeof(char *)) {
             pdp_type = ((const char **)data)[6];
@@ -2096,22 +2077,9 @@ static void requestSetupDataCall(void *data, size_t datalen, RIL_Token t)
         err = at_send_command("AT+CGACT=0,1", NULL);
 
         // Start data on PDP context 1
-        err = at_send_command("ATD*99***1#", NULL);
+        err = at_send_command("ATD*99***1#", &p_response);
 
-        // Retrieve dynamic properties & setup kernel iface
-        err = at_send_command_singleline("AT+CGCONTRDP=1", "+CGCONTRDP:", &p_response);
         if (err < 0 || p_response->success == 0) {
-            goto error;
-        }
-
-        if (parseCGCONTRDP(p_response->p_intermediates->line, &tmp_rp) < 0)
-            goto error;
-
-        ret = configureInterface(tmp_rp.ifname, tmp_rp.addresses);
-        freeParsedCGCONTRDP(&tmp_rp);
-
-        if (ret < 0) {
-            deconfigureInterface(tmp_rp.ifname);
             goto error;
         }
     }
@@ -2139,9 +2107,6 @@ static void requestDeactivateDataCall(void *data, size_t datalen, RIL_Token t)
     if (err < 0 || p_response->success == 0) {
         goto error;
     }
-
-    // TODO: Bug 821578: B2G Emulator: Support data call with multiple APN
-    deconfigureInterface("eth1");
 
     RIL_onRequestComplete(t, RIL_E_SUCCESS, NULL, 0);
     at_response_free(p_response);
@@ -3740,6 +3705,24 @@ static void onUnsolicited (const char *s, const char *sms_pdu)
         RIL_onUnsolicitedResponse(RIL_UNSOL_CDMA_PRL_CHANGED, &version, sizeof(version));
     } else if (strStartsWith(s, "+CFUN: 0")) {
         setRadioState(RADIO_STATE_OFF);
+    } else if (strStartsWith(s, "+CSQ:")) {
+        RIL_SignalStrength_v6 response;
+        line = p = strdup(s);
+        if (!line) {
+            ALOGE("+CSQ: Unable to allocate memory");
+            return;
+        }
+        if (at_tok_start(&p) < 0) {
+            ALOGE("invalid +CSQ response: %s", s);
+            free(line);
+            return;
+        }
+        if (handleSignalStrength(p, &response) < 0) {
+            free(line);
+            return;
+        }
+        free(line);
+        RIL_onUnsolicitedResponse(RIL_UNSOL_SIGNAL_STRENGTH, &response, sizeof(response));
     }
 }
 
