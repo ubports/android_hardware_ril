@@ -1171,7 +1171,7 @@ error:
     RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
 }
 
-static void requestCdmaBaseBandVersion(int request __unused, void *data __unused,
+static void requestBaseBandVersion(int request __unused, void *data __unused,
                                    size_t datalen __unused, RIL_Token t)
 {
     int err;
@@ -1190,7 +1190,7 @@ static void requestCdmaBaseBandVersion(int request __unused, void *data __unused
     free(responseStr);
 }
 
-static void requestCdmaDeviceIdentity(int request __unused, void *data __unused,
+static void requestDeviceIdentity(int request __unused, void *data __unused,
                                         size_t datalen __unused, RIL_Token t)
 {
     int err;
@@ -1222,7 +1222,7 @@ static void requestCdmaDeviceIdentity(int request __unused, void *data __unused,
 
     return;
 error:
-    RLOGE("requestCdmaDeviceIdentity must never return an error when radio is on");
+    RLOGE("requestDeviceIdentity must never return an error when radio is on");
     at_response_free(p_response);
     RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
 }
@@ -2570,6 +2570,14 @@ onRequest (int request, void *data, size_t datalen, RIL_Token t)
             at_response_free(p_response);
             break;
 
+        case RIL_REQUEST_BASEBAND_VERSION:
+            requestBaseBandVersion(request, data, datalen, t);
+            break;
+
+        case RIL_REQUEST_DEVICE_IDENTITY:
+            requestDeviceIdentity(request, data, datalen, t);
+             break;
+
         case RIL_REQUEST_GET_IMEI:
             p_response = NULL;
             err = at_send_command_numeric("AT+CGSN", &p_response);
@@ -3103,6 +3111,11 @@ static void pollSIMState (void *param __unused)
 {
     ATResponse *p_response;
     int ret;
+
+    if (sState != RADIO_STATE_SIM_NOT_READY) {
+        // no longer valid to poll
+        return;
+    }
 
     switch(getSIMStatus()) {
         case SIM_ABSENT:
