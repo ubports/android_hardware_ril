@@ -3464,16 +3464,15 @@ static void onUnsolicited (const char *s, const char *sms_pdu)
         line = p = strdup(s);
         at_tok_start(&p);
 
-        err = at_tok_nextstr(&p, &response);
+        while (isspace(*(++p))); /* remove leading whitespace */
+        response = strdup(p);
+
 
         free(line);
-        if (err != 0) {
-            RLOGE("invalid NITZ line %s\n", s);
-        } else {
-            RIL_onUnsolicitedResponse (
-                RIL_UNSOL_NITZ_TIME_RECEIVED,
-                response, strlen(response));
-        }
+        RIL_onUnsolicitedResponse (
+            RIL_UNSOL_NITZ_TIME_RECEIVED,
+            response, strlen(response));
+        free(response);
     } else if (strStartsWith(s,"+CRING:")
                 || strStartsWith(s,"RING")
                 || strStartsWith(s,"NO CARRIER")
