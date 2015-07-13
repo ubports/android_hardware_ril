@@ -708,7 +708,7 @@ static void requestSetNetworkSelectionManual(
 
     int rilError = RIL_E_SUCCESS;
     if (err < 0) {
-        LOGE("requestSetNetworkSelectionManual failed, err: %d", err);
+        RLOGE("requestSetNetworkSelectionManual failed, err: %d", err);
         at_response_free(p_response);
         RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
         return;
@@ -1033,10 +1033,10 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
     int numofElements=sizeof(RIL_SignalStrength_v6)/sizeof(int);
     int response[numofElements];
 
-    RIL_SignalStrength_v6 response;
     err = at_send_command_singleline("AT+CSQ", "+CSQ:", &p_response);
 
     if (err < 0 || p_response->success == 0) {
+        RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
         goto error;
     }
 
@@ -1049,9 +1049,6 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
         err = at_tok_nextint(&line, &(response[count]));
         if (err < 0) goto error;
     }
-
-    err = handleSignalStrength(line, &response);
-    if (err < 0) goto error;
 
     RIL_onRequestComplete(t, RIL_E_SUCCESS, response, sizeof(response));
 
@@ -3489,11 +3486,11 @@ static void onUnsolicited (const char *s, const char *sms_pdu)
         line = strdup(s);
         err = at_tok_start(&line);
         if (err < 0) {
-            LOGE("Error  %d \t %s\n ", err, line);
+            RLOGE("Error  %d \t %s\n ", err, line);
         }
         err = at_tok_nextstr(&line, &pStkPdu);
         if (err < 0) {
-            LOGE("Error:  %d \t %s\n ", err, line);
+            RLOGE("Error:  %d \t %s\n ", err, line);
         }
         RLOGI("STK Command PDU : %s \n", pStkPdu);
         if(NULL != pStkPdu) {
