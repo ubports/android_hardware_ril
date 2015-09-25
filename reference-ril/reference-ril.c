@@ -49,6 +49,9 @@ static void *noopRemoveWarning( void *a ) { return a; }
 
 #define MAX_AT_RESPONSE 0x1000
 
+/* pathname returned from RIL_REQUEST_SETUP_DATA_CALL / RIL_REQUEST_SETUP_DEFAULT_PDP */
+#define PPP_TTY_PATH "eth0"
+
 // Default MTU value
 #define DEFAULT_MTU 1500
 #ifdef USE_TI_COMMANDS
@@ -596,43 +599,99 @@ static void requestOrSendDataCallList(RIL_Token *t)
 
     for (p_cur = p_response->p_intermediates; p_cur != NULL;
          p_cur = p_cur->p_next) {
-         if (parseCGCONTRDP(p_cur->line, &tmp_rp) < 0)
+        char *line = p_cur->line;
+        int cid;
+
+        err = at_tok_start(&line);
+        if (err < 0)
+            goto error;
+
+        err = at_tok_nextint(&line, &cid);
+        if (err < 0)
             goto error;
 
         for (i = 0; i < n; i++) {
-            if (responses[i].cid == tmp_rp.cid)
+            if (responses[i].cid == cid)
                 break;
         }
 
         if (i >= n) {
             /* details for a context we didn't hear about in the last request */
-            freeParsedCGCONTRDP(&tmp_rp);
             continue;
         }
 
-        responses[i].status = tmp_rp.status;
-        responses[i].type = tmp_rp.type;
+        // Assume no error
+        responses[i].status = 0;
 
-#define COPY_FIELD(f) \
-    responses[i].f = alloca(strlen(tmp_rp.f) + 1); \
-    strcpy(responses[i].f, tmp_rp.f);
+        // type
+        err = at_tok_nextstr(&line, &out);
+        if (err < 0)
+            goto error;
+        responses[i].type = alloca(strlen(out) + 1);
+        strcpy(responses[i].type, out);
 
-        COPY_FIELD(ifname);
+        // APN ignored for v5
+        err = at_tok_nextstr(&line, &out);
+        if (err < 0)
+            goto error;
 
-        if (tmp_rp.addresses) {
-            COPY_FIELD(addresses);
+        responses[i].ifname = alloca(strlen(PPP_TTY_PATH) + 1);
+        strcpy(responses[i].ifname, PPP_TTY_PATH);
 
-            if (tmp_rp.gateways) {
-                COPY_FIELD(gateways);
-                if (tmp_rp.dnses) {
-                    COPY_FIELD(dnses);
-                 }
+        err = at_tok_nextstr(&line, &out);
+        if (err < 0)
+            goto error;
+
+        responses[i].addresses = alloca(strlen(out) + 1);
+        strcpy(responses[i].addresses, out);
+
+        {
+            char  propValue[PROP_VALUE_MAX];
+
+            if (__system_property_get("ro.kernel.qemu", propValue) != 0) {
+                /* We are in the emulator - the dns servers are listed
+                 * by the following system properties, setup in
+                 * /system/etc/init.goldfish.sh:
+                 *  - net.eth0.dns1
+                 *  - net.eth0.dns2
+                 *  - net.eth0.dns3
+                 *  - net.eth0.dns4
+                 */
+                const int   dnslist_sz = 128;
+                char*       dnslist = alloca(dnslist_sz);
+                const char* separator = "";
+                int         nn;
+
+                dnslist[0] = 0;
+                for (nn = 1; nn <= 4; nn++) {
+                    /* Probe net.eth0.dns<n> */
+                    char  propName[PROP_NAME_MAX];
+                    snprintf(propName, sizeof propName, "net.eth0.dns%d", nn);
+
+                    /* Ignore if undefined */
+                    if (__system_property_get(propName, propValue) == 0) {
+                        continue;
+                    }
+
+                    /* Append the DNS IP address */
+                    strlcat(dnslist, separator, dnslist_sz);
+                    strlcat(dnslist, propValue, dnslist_sz);
+                    separator = " ";
+                }
+                responses[i].dnses = dnslist;
+
+                /* There is only on gateway in the emulator */
+                responses[i].gateways = "10.0.2.2";
                 responses[i].mtu = DEFAULT_MTU;
-             }
-         }
-#undef COPY_FIELD
-
-        freeParsedCGCONTRDP(&tmp_rp);
+            }
+            else {
+                /* I don't know where we are, so use the public Google DNS
+                 * servers by default and no gateway.
+                 */
+                responses[i].dnses = "8.8.8.8 8.8.4.4";
+                responses[i].gateways = "";
+            }
+        }
     }
 
     at_response_free(p_response);
